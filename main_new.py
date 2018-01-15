@@ -31,18 +31,39 @@ class fm_data(data.Dataset):
         return torch.from_numpy(self.x[index]).unsqueeze(dim = 0), \
                 torch.LongTensor([self.y[index]])
 
+
+class output_penalty(nn.Module):
+    def __init__(self, epsilon):
+        super(output_penalty,self).__init__()
+        self.eps = epsilon
+    
+    def forward(self,target,label):
+        '''
+        label : (batchsize,)
+        target : (batchsize, 11)
+        '''
+        label = torch.unsqueeze(label,1)
+        label_onehot = torch.zeros_like(target).float()
+        label_onehot.scatter_(1,label,1).cuda()
+        target  = target.float()
+        softmax = F.softmax(target, dim = 1)
+        logsoftmax = F.log_softmax(target,dim = 1)
+        entropy = label_onehot * softmax * logsoftmax
+        return self.eps  * entropy.sum()
+
 class multiloss(nn.Module):
-    def __init__(self):
+    def __init__(self, flag_penalty):
         super(multiloss,self).__init__()
-        #self.softmax = nn.LogSoftmax()
-        #self.loss = nn.NLLLoss()
         self.crossentropy = nn.CrossEntropyLoss()
+        self.flag_penalty = flag_penalty
+        if flag_penalty:
+            self.penalty = output_penalty(1e-3)
 
     def forward(self, target, label):
         #都是variable
-        #target = self.softmax(target)
         label = label[:,0].clone()
-        #return self.loss(target,label)
+        if self.flag_penalty:
+            return self.crossentropy(target, label) + self.penalty(target, label)
         return self.crossentropy(target,label)
 
 class conv_layer(nn.Module):
@@ -90,14 +111,16 @@ class radio_cnn(nn.Module):
         super(radio_cnn,self).__init__()
         self.batch = batch
         self.conv = conv_layer()
-        self.conv = nn.DataParallel(self.conv)
+        #self.conv = nn.DataParallel(self.conv)
         #self.linear = nn.Sequential(
         #        nn.Linear(256,256),
         #        nn.ReLU(inplace = True)
         #        )
         linearLayer = nn.ModuleList()
         linearLayer.append(nn.Linear(16384,256))
+        #linearLayer.append(nn.Dropout(0.5, inplace = True))
         linearLayer.append(nn.Linear(256,11))
+        #linearLayer.append(nn.Dropout(0.5, inplace = True))
         self.linearLayer = linearLayer
 
     def forward(self,input):
@@ -105,7 +128,6 @@ class radio_cnn(nn.Module):
         #output = self.conv(input)
         #output = output.view(self.batch,-1)
         #output = self.linear(output)
-        #加上parallel
         output = self.conv(input)
         output = output.view(self.batch,-1)
         for layer in self.linearLayer:
@@ -162,7 +184,7 @@ def build_conv(batch):
     return radio_cnn(batch)
 
 def build_loss(FLAGS):
-    return multiloss()
+    return multiloss(FLAGS.confident_penalty)
 
 def weights_init(m):
     if isinstance(m,nn.Conv2d):
@@ -184,7 +206,7 @@ def main(FLAGS):
     conv_net = build_conv(FLAGS.batch)
 
     if FLAGS.weights:
-        conv_net.load_state_dict(torch.load(FLAGS.weights))
+        conv_net.load_state_dict(torch.load(FLAGS.weights),strict =False)
     else:
         for m in conv_net.modules():
             if isinstance(m,nn.Conv2d):
@@ -202,10 +224,10 @@ def main(FLAGS):
     #cudnn.benchmark = True
 
     #optimizer = optim.Adam(net.parameters(), lr = FLAGS.lr)
-    optimizer = optim.SGD(net.parameters(), lr = FLAGS.lr) \
+    #optimizer = optim.SGD(net.parameters(), lr = FLAGS.lr) \
     #        momentum = FLAGS.momentum)
     #        momentum = FLAGS.momentum, weight_decay = FLAGS.weight_decay)
-    #optimizer = optim.Adagrad(net.parameters(), lr = FLAGS.lr)
+    optimizer = optim.Adagrad(net.parameters(), lr = FLAGS.lr, weight_decay = FLAGS.weight_decay)
     criterion = build_loss(FLAGS)
 
     vis = visdom.Visdom()
@@ -235,7 +257,9 @@ def main(FLAGS):
 
     iteration = 0
     lr = FLAGS.lr
-    for epoch in range(1,FLAGS.epochs+1):
+    #for epoch in range(1,FLAGS.epochs+1):
+    epoch = 1
+    while True:
         #if epoch %2 == 0:
         #    lr *= 10
         #    adjust_learning_rate(optimizer,lr)
@@ -275,6 +299,7 @@ def main(FLAGS):
                         #create_graph = True, \
                         #retain_graph = True \
                 #        
+        epoch += 1
         
         net.eval()
         train_accu = 0
@@ -320,15 +345,19 @@ if __name__ == "__main__":
     parser.add_argument("--data", type = str, default = "/home/v-shliu/code/radioML-modulation_recognition/RML2016.10a_dict.dat")
     parser.add_argument("--lr", type = float, default = 1e-3)
     parser.add_argument("--momentum",type = float, default = 0.9)
-    parser.add_argument("--weight_decay",type = float, default = 5e-4)
+    parser.add_argument("--weight_decay",type = float, default = 1e-2)
     parser.add_argument("--batch",type = int, default = 1024)
     parser.add_argument("--epochs", type = int, default =100)
     parser.add_argument("--phase", type = str, default = "test")
     parser.add_argument("--param", type = str)
     parser.add_argument("--weights",type = str)
+    parser.add_argument("--confident_penalty", type = bool, default = False)
+    parser.add_argument("--use_gpu", type = str, default = "0")
 
     FLAGS = parser.parse_args()
     print FLAGS
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.use_gpu
 
     if FLAGS.param == None:
         raise
