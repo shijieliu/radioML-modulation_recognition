@@ -360,7 +360,7 @@ if __name__ == "__main__":
     os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.use_gpu
 
     if FLAGS.param == None:
-        raise
+        raise NotImplementedError()
     if not os.path.exists(FLAGS.param):
         os.mkdir(FLAGS.param)
 

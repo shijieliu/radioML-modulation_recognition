@@ -4,16 +4,17 @@
 import os
 from argparse import ArgumentParser
 import numpy as np
-from utils import init_data,ConvModel
+from utils import init_data,ConvModel, ResModel
 
 def main(FLAGS):
     train_data, test_data = init_data(FLAGS)
-    convmodel = ConvModel(train_data, test_data, FLAGS)
-    convmodel.compile()
-    convmodel.train()
-
-
-
+    assert FLAGS.model_type in ['conv', 'res']
+    if FLAGS.model_type == 'conv':
+        model = ConvModel(train_data, test_data, FLAGS)
+    elif FLAGS.model_type == 'res':
+        model = ResModel(train_data, test_data, FLAGS)
+    model.compile()
+    model.train()
 
 
 if __name__ == "__main__":
@@ -29,6 +30,7 @@ if __name__ == "__main__":
     parser.add_argument("--optim", type=str, default=None)
     parser.add_argument("--confident_penalty", type = bool, default = False)
     parser.add_argument("--use_gpu", type = str, default = "0")
+    parser.add_argument('--model_type', type=str) #conv, res
 
     FLAGS = parser.parse_args()
     print FLAGS
